@@ -125,6 +125,25 @@ def run_supplier_agents(
         api_key=resolved_api_key,
     )
 
+    route = _classify_route(llm, question)
+
+    try:
+        if route == "SQL":
+            return _run_sql_path(llm, question)
+        return _run_insight_path(llm, question)
+    except Exception as exc:
+        _raise_friendly_lmstudio_error(exc, base_url=resolved_base_url, model=resolved_model)
+        raise
+
+
+def _classify_route(llm: LLM, question: str) -> str:
+    """Classify a question as ``SQL`` or ``INSIGHT`` and branch on the result.
+
+    Runs the router as a one-task crew, then normalises its free-text answer to
+    one of the two supported routes. Anything that isn't clearly ``INSIGHT``
+    falls back to ``SQL``, since the dataset is the safer default for
+    procurement questions.
+    """
     router_agent = Agent(
         role="Query Router",
         goal="Classify if the user query needs SQL analytics from supplier data.",
@@ -132,7 +151,29 @@ def run_supplier_agents(
         llm=llm,
         allow_delegation=False,
     )
+    route_task = Task(
+        description=(
+            "User question: {question}\n\n"
+            "Return exactly one word: SQL or INSIGHT. "
+            "Choose SQL when the answer requires supplier dataset calculations, "
+            "filtering, grouping, ranking, or trend analysis. "
+            "Choose INSIGHT for general procurement advice that needs no dataset lookup."
+        ),
+        expected_output="Exactly one word: SQL or INSIGHT",
+        agent=router_agent,
+    )
+    crew = Crew(
+        agents=[router_agent],
+        tasks=[route_task],
+        process=Process.sequential,
+        verbose=False,
+    )
+    verdict = str(crew.kickoff(inputs={"question": question})).strip().upper()
+    return "INSIGHT" if "INSIGHT" in verdict and "SQL" not in verdict else "SQL"
 
+
+def _run_sql_path(llm: LLM, question: str) -> str:
+    """Full path: generate + execute SQL, then summarise into business insight."""
     sql_agent = Agent(
         role="SQL Analyst",
         goal="Generate and run safe DuckDB read-only SQL against supplier data.",
@@ -141,7 +182,6 @@ def run_supplier_agents(
         tools=[get_schema, execute_sql],
         allow_delegation=False,
     )
-
     insight_agent = Agent(
         role="Procurement Insight Analyst",
         goal="Summarize SQL results into direct business insights without inventing values.",
@@ -149,17 +189,6 @@ def run_supplier_agents(
         llm=llm,
         allow_delegation=False,
     )
-
-    route_task = Task(
-        description=(
-            "User question: {question}\n\n"
-            "Return exactly one word: SQL or INSIGHT. "
-            "Choose SQL when the answer requires supplier dataset calculations, filtering, grouping, ranking, or trend analysis."
-        ),
-        expected_output="Exactly one word: SQL or INSIGHT",
-        agent=router_agent,
-    )
-
     sql_task = Task(
         description=(
             "User question: {question}\n\n"
@@ -171,9 +200,7 @@ def run_supplier_agents(
         ),
         expected_output="SQL and RESULT sections.",
         agent=sql_agent,
-        context=[route_task],
     )
-
     insight_task = Task(
         description=(
             "User question: {question}\n\n"
@@ -186,20 +213,40 @@ def run_supplier_agents(
         agent=insight_agent,
         context=[sql_task],
     )
-
     crew = Crew(
-        agents=[router_agent, sql_agent, insight_agent],
-        tasks=[route_task, sql_task, insight_task],
+        agents=[sql_agent, insight_agent],
+        tasks=[sql_task, insight_task],
         process=Process.sequential,
         verbose=False,
     )
+    return str(crew.kickoff(inputs={"question": question}))
 
-    try:
-        result = crew.kickoff(inputs={"question": question})
-        return str(result)
-    except Exception as exc:
-        _raise_friendly_lmstudio_error(exc, base_url=resolved_base_url, model=resolved_model)
-        raise
+
+def _run_insight_path(llm: LLM, question: str) -> str:
+    """Lightweight path for questions that need no dataset lookup."""
+    insight_agent = Agent(
+        role="Procurement Insight Analyst",
+        goal="Answer general procurement questions clearly without inventing data.",
+        backstory="You advise sourcing and pricing teams.",
+        llm=llm,
+        allow_delegation=False,
+    )
+    insight_task = Task(
+        description=(
+            "User question: {question}\n\n"
+            "Answer directly and concisely. If the question would need specific "
+            "supplier figures you do not have, say so rather than inventing numbers."
+        ),
+        expected_output="A concise, direct answer.",
+        agent=insight_agent,
+    )
+    crew = Crew(
+        agents=[insight_agent],
+        tasks=[insight_task],
+        process=Process.sequential,
+        verbose=False,
+    )
+    return str(crew.kickoff(inputs={"question": question}))
 
 
 def parse_args() -> argparse.Namespace:
