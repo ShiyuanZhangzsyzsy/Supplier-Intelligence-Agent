@@ -1,0 +1,18 @@
+# Environment & secrets
+.env
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local data & databases
+*.duckdb
+*.duckdb.wal
+data/
+tenants/
+
+# OS
+.DS_Store
