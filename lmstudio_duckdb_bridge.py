@@ -8,21 +8,10 @@ from pathlib import Path
 import duckdb
 from openai import OpenAI
 
-
-FORBIDDEN_SQL = {
-    "insert",
-    "update",
-    "delete",
-    "drop",
-    "alter",
-    "create",
-    "replace",
-    "truncate",
-    "attach",
-    "detach",
-    "copy",
-    "call",
-}
+from sql_safety import (
+    create_or_replace_csv_view,
+    validate_read_only_sql as _shared_validate_read_only_sql,
+)
 
 
 class LMStudioClient:
@@ -85,34 +74,6 @@ def get_schema(conn: duckdb.DuckDBPyConnection, table: str) -> str:
     return df.to_markdown(index=False)
 
 
-def create_or_replace_csv_view(
-    conn: duckdb.DuckDBPyConnection,
-    csv_path: str,
-    view_name: str = "source_data",
-) -> None:
-    escaped_path = csv_path.replace("'", "''")
-    candidates = [
-        f"SELECT * FROM read_csv_auto('{escaped_path}', HEADER=TRUE)",
-        f"SELECT * FROM read_csv_auto('{escaped_path}', HEADER=TRUE, STRICT_MODE=FALSE, IGNORE_ERRORS=TRUE)",
-        f"SELECT * FROM read_csv('{escaped_path}', AUTO_DETECT=TRUE, HEADER=TRUE, SAMPLE_SIZE=-1, IGNORE_ERRORS=TRUE, NULL_PADDING=TRUE)",
-    ]
-
-    errors: list[str] = []
-    for query in candidates:
-        try:
-            conn.execute(f"CREATE OR REPLACE VIEW {view_name} AS {query}")
-            conn.execute(f"SELECT * FROM {view_name} LIMIT 1").fetchall()
-            return
-        except Exception as exc:
-            errors.append(str(exc))
-
-    raise RuntimeError(
-        "Could not parse CSV with DuckDB direct reader. "
-        "Try a cleaner CSV export or specify DuckDB CSV options. "
-        f"Last error: {errors[-1] if errors else 'unknown error'}"
-    )
-
-
 def extract_sql(text: str) -> str:
     code_block = re.findall(r"```(?:sql)?\s*(.*?)```", text, flags=re.DOTALL | re.IGNORECASE)
     if code_block:
@@ -121,20 +82,8 @@ def extract_sql(text: str) -> str:
 
 
 def validate_read_only_sql(sql: str) -> None:
-    if not sql:
-        raise ValueError("Model returned empty SQL.")
-
-    if ";" in sql:
-        raise ValueError("Only one SQL statement is allowed.")
-
-    lowered = sql.lower().strip()
-    if not lowered.startswith(("select", "with", "show", "describe", "pragma")):
-        raise ValueError("Only read-only SQL is allowed (SELECT/WITH/SHOW/DESCRIBE/PRAGMA).")
-
-    tokens = set(re.findall(r"[a-zA-Z_]+", lowered))
-    hit = sorted(tokens.intersection(FORBIDDEN_SQL))
-    if hit:
-        raise ValueError(f"Forbidden SQL keywords detected: {', '.join(hit)}")
+    """Validate model-generated SQL, delegating to the shared safety module."""
+    _shared_validate_read_only_sql(sql)
 
 
 def question_to_sql(
