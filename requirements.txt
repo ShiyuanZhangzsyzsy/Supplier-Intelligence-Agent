@@ -1,0 +1,10 @@
+# Core dependencies for the Supplier Intelligence Agent (SQL analytics path).
+# Pinned to major versions known to work; adjust as needed for your environment.
+
+crewai>=0.60,<1.0          # multi-agent orchestration
+duckdb>=1.0                # embedded read-only SQL analytics
+gradio>=4.0                # local web UI
+openai>=1.30               # OpenAI-compatible client for the LM Studio endpoint
+python-dotenv>=1.0         # .env configuration loading
+pandas>=2.0                # DataFrame handling
+tabulate>=0.9              # required by pandas .to_markdown()
