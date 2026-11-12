@@ -1,17 +1,19 @@
 # Supplier Intelligence Agent
 
+[![License: MIT](https://img.shields.io/github/license/ShiyuanZhangzsyzsy/Supplier-Intelligence-Agent)](LICENSE)
+
 A privacy-first prototype that answers natural-language questions about supplier
 and procurement data by generating safe, read-only SQL and running it locally
 against DuckDB. It runs entirely on your machine by default — the language model
 is served from a local [LM Studio](https://lmstudio.ai/) endpoint, so no data
 leaves your network.
 
-> **Scope note.** This repository contains the **structured SQL analytics path**:
-> a Gradio UI, a CrewAI router that branches between a full SQL pipeline and a
-> lightweight advice path, a read-only SQL safety layer, and CSV/Excel ingestion.
-> Retrieval-augmented generation (RAG) over unstructured documents and the
-> advanced statistical analytics (anomaly detection, forecasting) are on the
-> roadmap below, not yet in this repo.
+> **Scope note.** This is a focused prototype for **structured SQL analytics**,
+> not a full enterprise platform. The implemented path includes a Gradio UI, a
+> CrewAI router that branches between SQL analytics and a lightweight advice
+> path, a read-only SQL safety layer, and CSV/Excel ingestion. RAG over
+> unstructured documents and advanced statistical analytics (such as anomaly
+> detection and forecasting) are roadmap items, not implemented features.
 
 ---
 
@@ -25,6 +27,30 @@ leaves your network.
   read-only DuckDB query, executes it through a guarded tool, and an **insight
   agent** turns the result into a short business answer without inventing values.
 - The whole flow runs against a local model, keeping procurement data on-device.
+
+---
+
+## Demo
+
+The app needs a local LM Studio chat model and a supplier CSV or Excel file;
+neither a model nor a sample dataset is bundled with this repository. To try
+the implemented SQL path:
+
+1. Follow [Quick start](#quick-start) to install dependencies and start LM Studio.
+2. Launch `python web_ui.py` and open `http://127.0.0.1:7860`.
+3. In the **Data File Path** field, enter the path to your own data file, then
+   ask a question such as *"Top 5 suppliers by total spend"*.
+
+The SQL guardrail can also be demonstrated independently, without a model or
+data file:
+
+```bash
+python -m unittest -v test_sql_safety
+```
+
+The tests verify that unsafe SQL is rejected, including `DROP` statements and
+stacked statements. See [Verify the SQL guardrail](#verify-the-sql-guardrail)
+for representative rejection messages.
 
 ---
 
@@ -82,6 +108,7 @@ quick testing without the CrewAI overhead.
 ├── resilient_ingestion.py     # CSV/Excel → DuckDB loading (encoding-resilient)
 ├── duckdb_query_cli.py        # small interactive DuckDB SQL CLI
 ├── duckdb_smoke_test.py       # smoke test for the DuckDB layer
+├── test_sql_safety.py         # offline unit tests for the SQL guardrail
 ├── PROJECT_PIPELINE_GRAPH.md  # mermaid diagram of the flow
 ├── requirements.txt
 └── LICENSE
@@ -113,6 +140,26 @@ python web_ui.py
 ```
 
 Then open `http://127.0.0.1:7860`.
+
+### Verify the SQL guardrail
+
+The safety tests run locally without LM Studio or a supplier dataset:
+
+```bash
+python -m unittest -v test_sql_safety
+```
+
+They cover the read-only statement allowlist, all blocked write/DDL keywords
+(including `DROP`), empty input, and stacked statements. For example, the
+validator rejects both of these:
+
+```text
+DROP TABLE suppliers
+ValueError: Only read-only SQL is allowed (SELECT/WITH/SHOW/DESCRIBE/PRAGMA).
+
+SELECT 1; SELECT 2
+ValueError: Only one SQL statement is allowed.
+```
 
 You can also run a single question from the command line:
 
